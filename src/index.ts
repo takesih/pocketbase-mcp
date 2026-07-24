@@ -64,11 +64,6 @@ class PocketBaseServer {
     const password = process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
     if (email && password) {
       await this.pb.collection('_superusers').authWithPassword(email, password);
-    } else {
-      // Try anonymous auth as fallback for public collections
-      try {
-        await this.pb.authStore.load();
-      } catch {}
     }
   }
 
@@ -470,12 +465,6 @@ class PocketBaseServer {
             return await this.listCollections(request.params.arguments);
           case 'delete_collection':
             return await this.deleteCollection(request.params.arguments);
-          default:
-            throw new McpError(
-              ErrorCode.MethodNotFound,
-              `Unknown tool: ${request.params.name}`
-            );
-
           case 'auth_refresh':
             return await this.authRefresh(request.params.arguments);
           case 'list_auth_methods':
@@ -498,6 +487,11 @@ class PocketBaseServer {
             return await this.confirmEmailChange(request.params.arguments);
           case 'impersonate_user':
             return await this.impersonateUser(request.params.arguments);
+          default:
+            throw new McpError(
+              ErrorCode.MethodNotFound,
+              `Unknown tool: ${request.params.name}`
+            );
         }
       } catch (error: unknown) {
         if (error instanceof McpError) {
@@ -694,6 +688,125 @@ class PocketBaseServer {
     }
   }
 
+  private async authRefresh(args: any) {
+    try {
+      await this.adminAuth();
+      const collection = args?.collection || '_superusers';
+      const result = await this.pb.collection(collection).authRefresh();
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to refresh auth: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async listAuthMethods(args: any) {
+    try {
+      const methods = await this.pb.collection('_users').listAuthMethods();
+      return { content: [{ type: 'text', text: JSON.stringify(methods, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to list auth methods: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async authenticateWithOAuth2(args: any) {
+    try {
+      const result = await this.pb.collection('_users').authWithOAuth2Code(
+        args.provider,
+        args.code,
+        args.codeVerifier,
+        args.redirectUrl,
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `OAuth2 authentication failed: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async authenticateWithOTP(args: any) {
+    try {
+      const result = await this.pb.collection('_users').requestOTP(args.email);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `OTP authentication failed: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async requestVerification(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.collection('_users').requestVerification(args.email);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to request verification: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async confirmVerification(args: any) {
+    try {
+      const result = await this.pb.collection('_users').confirmVerification(args.token);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to confirm verification: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async requestPasswordReset(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.collection('_users').requestPasswordReset(args.email);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to request password reset: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async confirmPasswordReset(args: any) {
+    try {
+      const result = await this.pb.collection('_users').confirmPasswordReset(
+        args.token,
+        args.newPassword,
+        args.confirmNewPassword ?? args.newPassword,
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to confirm password reset: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async requestEmailChange(args: any) {
+    try {
+      const result = await this.pb.collection('_users').requestEmailChange(args.newEmail);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to request email change: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async confirmEmailChange(args: any) {
+    try {
+      const result = await this.pb.collection('_users').confirmEmailChange(
+        args.token,
+        args.password || '',
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to confirm email change: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async impersonateUser(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.collection('_users').impersonate(
+        args.userId,
+        args.durationSeconds || 3600,
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to impersonate user: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
@@ -739,126 +852,4 @@ export function flattenErrors(errors: unknown): string[] {
 export function pocketbaseErrorMessage(errors: unknown): string {
   const messages = flattenErrors(errors);
   return messages.length > 0 ? messages.join("\n") : "No errors found";
-
-  private async authRefresh(args: any) {
-    try {
-      await this.adminAuth();
-      const result = await this.pb.authStore.refresh();
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to refresh auth: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async listAuthMethods(args: any) {
-    try {
-      const methods = await this.pb.collection('_users').getAuthMethods();
-      return { content: [{ type: 'text', text: JSON.stringify(methods, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to list auth methods: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async authenticateWithOAuth2(args: any) {
-    try {
-      const result = await this.pb.collection('_users').authWithOAuth2({
-        provider: args.provider,
-        code: args.code,
-        codeVerifier: args.codeVerifier,
-        redirectUrl: args.redirectUrl,
-      });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `OAuth2 authentication failed: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async authenticateWithOTP(args: any) {
-    try {
-      const result = await this.pb.collection('_users').authWithOTP({ email: args.email });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `OTP authentication failed: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async requestVerification(args: any) {
-    try {
-      await this.adminAuth();
-      const result = await this.pb.collection('_users').requestVerificationEmail(args.email);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to request verification: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async confirmVerification(args: any) {
-    try {
-      const result = await this.pb.collection('_users').confirmVerification(args.token);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to confirm verification: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async requestPasswordReset(args: any) {
-    try {
-      await this.adminAuth();
-      const result = await this.pb.collection('_users').requestPasswordResetEmail(args.email);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to request password reset: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async confirmPasswordReset(args: any) {
-    try {
-      const result = await this.pb.collection('_users').confirmPasswordReset({
-        token: args.token,
-        newPassword: args.newPassword,
-        confirmNewPassword: args.confirmNewPassword,
-      });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to confirm password reset: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async requestEmailChange(args: any) {
-    try {
-      const result = await this.pb.collection('_users').requestEmailChange({
-        newEmail: args.newEmail,
-        password: args.password || '',
-      });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to request email change: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async confirmEmailChange(args: any) {
-    try {
-      const result = await this.pb.collection('_users').confirmEmailChange({
-        token: args.token,
-        password: args.password || '',
-      });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to confirm email change: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
-  private async impersonateUser(args: any) {
-    try {
-      await this.adminAuth();
-      const result = await this.pb.collection('_users').impersonate({
-        userId: args.userId,
-        durationSeconds: args.durationSeconds || 3600,
-      });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (error: unknown) {
-      throw new McpError(ErrorCode.InternalError, `Failed to impersonate user: ${pocketbaseErrorMessage(error)}`);
-    }
-  }
-
 }
