@@ -314,6 +314,130 @@ class PocketBaseServer {
             required: ['collectionIdOrName'],
           },
         },
+        {
+          name: 'auth_refresh',
+          description: 'Refresh authentication token',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'list_auth_methods',
+          description: 'List all available authentication methods',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'authenticate_with_oauth2',
+          description: 'Authenticate a user with OAuth2',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', description: 'OAuth2 provider name (e.g., google, facebook, github)' },
+              code: { type: 'string', description: 'The authorization code returned from the OAuth2 provider' },
+              codeVerifier: { type: 'string', description: 'PKCE code verifier' },
+              redirectUrl: { type: 'string', description: 'The redirect URL used in the OAuth2 flow' },
+            },
+            required: ['provider', 'code'],
+          },
+        },
+        {
+          name: 'authenticate_with_otp',
+          description: 'Authenticate a user with one-time password',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', description: 'User email' },
+            },
+            required: ['email'],
+          },
+        },
+        {
+          name: 'request_verification',
+          description: 'Request email verification',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', description: 'User email' },
+            },
+            required: ['email'],
+          },
+        },
+        {
+          name: 'confirm_verification',
+          description: 'Confirm email verification with token',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              token: { type: 'string', description: 'Verification token' },
+            },
+            required: ['token'],
+          },
+        },
+        {
+          name: 'request_password_reset',
+          description: 'Request password reset',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', description: 'User email' },
+            },
+            required: ['email'],
+          },
+        },
+        {
+          name: 'confirm_password_reset',
+          description: 'Confirm password reset with token',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              token: { type: 'string', description: 'Reset token' },
+              newPassword: { type: 'string', description: 'New password' },
+              confirmNewPassword: { type: 'string', description: 'Confirm new password' },
+            },
+            required: ['token', 'newPassword'],
+          },
+        },
+        {
+          name: 'request_email_change',
+          description: 'Request email change',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              newEmail: { type: 'string', description: 'New email address' },
+              password: { type: 'string', description: 'Current password for confirmation' },
+            },
+            required: ['newEmail'],
+          },
+        },
+        {
+          name: 'confirm_email_change',
+          description: 'Confirm email change with token',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              token: { type: 'string', description: 'Email change token' },
+              password: { type: 'string', description: 'Current password for confirmation' },
+            },
+            required: ['token'],
+          },
+        },
+        {
+          name: 'impersonate_user',
+          description: 'Impersonate another user (admin only)',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              userId: { type: 'string', description: 'ID of the user to impersonate' },
+              durationSeconds: { type: 'number', description: 'Duration in seconds for impersonation', default: 3600 },
+            },
+            required: ['userId'],
+          },
+        },
+
       ],
     }));
 
@@ -351,6 +475,29 @@ class PocketBaseServer {
               ErrorCode.MethodNotFound,
               `Unknown tool: ${request.params.name}`
             );
+
+          case 'auth_refresh':
+            return await this.authRefresh(request.params.arguments);
+          case 'list_auth_methods':
+            return await this.listAuthMethods(request.params.arguments);
+          case 'authenticate_with_oauth2':
+            return await this.authenticateWithOAuth2(request.params.arguments);
+          case 'authenticate_with_otp':
+            return await this.authenticateWithOTP(request.params.arguments);
+          case 'request_verification':
+            return await this.requestVerification(request.params.arguments);
+          case 'confirm_verification':
+            return await this.confirmVerification(request.params.arguments);
+          case 'request_password_reset':
+            return await this.requestPasswordReset(request.params.arguments);
+          case 'confirm_password_reset':
+            return await this.confirmPasswordReset(request.params.arguments);
+          case 'request_email_change':
+            return await this.requestEmailChange(request.params.arguments);
+          case 'confirm_email_change':
+            return await this.confirmEmailChange(request.params.arguments);
+          case 'impersonate_user':
+            return await this.impersonateUser(request.params.arguments);
         }
       } catch (error: unknown) {
         if (error instanceof McpError) {
@@ -592,5 +739,126 @@ export function flattenErrors(errors: unknown): string[] {
 export function pocketbaseErrorMessage(errors: unknown): string {
   const messages = flattenErrors(errors);
   return messages.length > 0 ? messages.join("\n") : "No errors found";
-}
 
+  private async authRefresh(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.authStore.refresh();
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to refresh auth: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async listAuthMethods(args: any) {
+    try {
+      const methods = await this.pb.collection('_users').getAuthMethods();
+      return { content: [{ type: 'text', text: JSON.stringify(methods, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to list auth methods: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async authenticateWithOAuth2(args: any) {
+    try {
+      const result = await this.pb.collection('_users').authWithOAuth2({
+        provider: args.provider,
+        code: args.code,
+        codeVerifier: args.codeVerifier,
+        redirectUrl: args.redirectUrl,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `OAuth2 authentication failed: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async authenticateWithOTP(args: any) {
+    try {
+      const result = await this.pb.collection('_users').authWithOTP({ email: args.email });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `OTP authentication failed: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async requestVerification(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.collection('_users').requestVerificationEmail(args.email);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to request verification: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async confirmVerification(args: any) {
+    try {
+      const result = await this.pb.collection('_users').confirmVerification(args.token);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to confirm verification: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async requestPasswordReset(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.collection('_users').requestPasswordResetEmail(args.email);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to request password reset: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async confirmPasswordReset(args: any) {
+    try {
+      const result = await this.pb.collection('_users').confirmPasswordReset({
+        token: args.token,
+        newPassword: args.newPassword,
+        confirmNewPassword: args.confirmNewPassword,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to confirm password reset: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async requestEmailChange(args: any) {
+    try {
+      const result = await this.pb.collection('_users').requestEmailChange({
+        newEmail: args.newEmail,
+        password: args.password || '',
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to request email change: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async confirmEmailChange(args: any) {
+    try {
+      const result = await this.pb.collection('_users').confirmEmailChange({
+        token: args.token,
+        password: args.password || '',
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to confirm email change: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async impersonateUser(args: any) {
+    try {
+      await this.adminAuth();
+      const result = await this.pb.collection('_users').impersonate({
+        userId: args.userId,
+        durationSeconds: args.durationSeconds || 3600,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to impersonate user: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+}
