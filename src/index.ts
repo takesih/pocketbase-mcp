@@ -10,6 +10,23 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import PocketBase from 'pocketbase';
 
+function generateFieldId(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 15; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+function assignFieldIds(fields: any[]): any[] {
+  if (!fields) return [];
+  return fields.map((field: any) => ({
+    ...field,
+    id: field.id || generateFieldId(),
+  }));
+}
+
 class PocketBaseServer {
   private server: Server;
   private pb: PocketBase;
@@ -356,7 +373,7 @@ class PocketBaseServer {
         { hidden: false, id: "autodate_updated", name: "updated", onCreate: true, onUpdate: true, presentable: false, system: false, type: "autodate" }
       ];
 
-      const collectionData = { ...args, fields: [...(args.fields || []), ...defaultFields] };
+      const collectionData = { ...args, fields: [...(assignFieldIds(args.fields || [])), ...defaultFields] };
       const result = await this.pb.collections.create(collectionData as any);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
