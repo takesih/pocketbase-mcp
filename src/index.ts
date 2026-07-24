@@ -1,3 +1,5 @@
+
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -7,8 +9,6 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import PocketBase from 'pocketbase';
-
-
 
 class PocketBaseServer {
   private server: Server;
@@ -27,7 +27,6 @@ class PocketBaseServer {
       }
     );
 
-    // Initialize PocketBase client
     const url = process.env.POCKETBASE_URL;
     if (!url) {
       throw new Error('POCKETBASE_URL environment variable is required');
@@ -36,12 +35,24 @@ class PocketBaseServer {
 
     this.setupToolHandlers();
 
-    // Error handling
-    this.server.onerror = (error) => console.error('[MCP Error]', error);
+    this.server.onerror = (error: unknown) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
       await this.server.close();
       process.exit(0);
     });
+  }
+
+  private async adminAuth() {
+    const email = process.env.POCKETBASE_ADMIN_EMAIL ?? '';
+    const password = process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
+    if (email && password) {
+      await this.pb.collection('_superusers').authWithPassword(email, password);
+    } else {
+      // Try anonymous auth as fallback for public collections
+      try {
+        await this.pb.authStore.load();
+      } catch {}
+    }
   }
 
   private setupToolHandlers() {
@@ -53,16 +64,8 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              name: {
-                type: 'string',
-                description: 'Unique collection name (used as a table name for the records table)',
-              },
-              type: {
-                type: 'string',
-                description: 'Type of the collection',
-                enum: ['base', 'view', 'auth'],
-                default: 'base',
-              },
+              name: { type: 'string', description: 'Unique collection name (used as a table name for the records table)' },
+              type: { type: 'string', description: 'Type of the collection', enum: ['base', 'view', 'auth'], default: 'base' },
               fields: {
                 type: 'array',
                 description: 'List with the collection fields',
@@ -72,49 +75,23 @@ class PocketBaseServer {
                     name: { type: 'string', description: 'Field name' },
                     type: { type: 'string', description: 'Field type', enum: ['bool', 'date', 'number', 'text', 'email', 'url', 'editor', 'autodate', 'select', 'file', 'relation', 'json', 'geoPoint'] },
                     required: { type: 'boolean', description: 'Is field required?' },
-                    values: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'Allowed values for select type fields',
-                    },
+                    values: { type: 'array', items: { type: 'string' }, description: 'Allowed values for select type fields' },
                     collectionId: { type: 'string', description: 'Collection ID for relation type fields' }
                   },
                 },
               },
-              createRule: {
-                type: 'string',
-                description: 'API rule for creating records',
-              },
-              updateRule: {
-                type: 'string',
-                description: 'API rule for updating records',
-              },
-              deleteRule: {
-                type: 'string',
-                description: 'API rule for deleting records',
-              },
-              listRule: {
-                type: 'string',
-                description: 'API rule for listing and viewing records',
-              },
-              viewRule: {
-                type: 'string',
-                description: 'API rule for viewing a single record',
-              },
-              viewQuery: {
-                type: 'string',
-                description: 'SQL query for view collections',
-              },
+              createRule: { type: 'string', description: 'API rule for creating records' },
+              updateRule: { type: 'string', description: 'API rule for updating records' },
+              deleteRule: { type: 'string', description: 'API rule for deleting records' },
+              listRule: { type: 'string', description: 'API rule for listing and viewing records' },
+              viewRule: { type: 'string', description: 'API rule for viewing a single record' },
+              viewQuery: { type: 'string', description: 'SQL query for view collections' },
               passwordAuth: {
                 type: 'object',
                 description: 'Password authentication options',
                 properties: {
                   enabled: { type: 'boolean', description: 'Is password authentication enabled?' },
-                  identityFields: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'Fields used for identity in password authentication',
-                  },
+                  identityFields: { type: 'array', items: { type: 'string' }, description: 'Fields used for identity in password authentication' },
                 },
               },
             },
@@ -127,71 +104,35 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collectionIdOrName: {
-                type: 'string',
-                description: 'ID or name of the collection to update',
-              },
-              name: {
-                type: 'string',
-                description: 'New unique collection name',
-              },
-              type: {
-                type: 'string',
-                description: 'Type of the collection',
-                enum: ['base', 'view', 'auth'],
-              },
+              collectionIdOrName: { type: 'string', description: 'ID or name of the collection to update' },
+              name: { type: 'string', description: 'New unique collection name' },
+              type: { type: 'string', description: 'Type of the collection', enum: ['base', 'view', 'auth'] },
               fields: {
                 type: 'array',
-                description: 'List with the new collection fields. If not empty, the old schema will be replaced with the new one.',
+                description: 'List with the new collection fields. If not empty, the old schema will be replaced.',
                 items: {
                   type: 'object',
                   properties: {
                     name: { type: 'string', description: 'Field name' },
                     type: { type: 'string', description: 'Field type', enum: ['bool', 'date', 'number', 'text', 'email', 'url', 'editor', 'autodate', 'select', 'file', 'relation', 'json', 'geoPoint'] },
                     required: { type: 'boolean', description: 'Is field required?' },
-                    values: {
-                      type: 'array',
-                      items: { type: 'string' },
-                      description: 'Allowed values for select type fields',
-                    },
+                    values: { type: 'array', items: { type: 'string' }, description: 'Allowed values for select type fields' },
                     collectionId: { type: 'string', description: 'Collection ID for relation type fields' }
                   },
                 },
               },
-              createRule: {
-                type: 'string',
-                description: 'API rule for creating records',
-              },
-              updateRule: {
-                type: 'string',
-                description: 'API rule for updating records',
-              },
-              deleteRule: {
-                type: 'string',
-                description: 'API rule for deleting records',
-              },
-              listRule: {
-                type: 'string',
-                description: 'API rule for listing and viewing records',
-              },
-              viewRule: {
-                type: 'string',
-                description: 'API rule for viewing a single record',
-              },
-              viewQuery: {
-                type: 'string',
-                description: 'SQL query for view collections',
-              },
+              createRule: { type: 'string', description: 'API rule for creating records' },
+              updateRule: { type: 'string', description: 'API rule for updating records' },
+              deleteRule: { type: 'string', description: 'API rule for deleting records' },
+              listRule: { type: 'string', description: 'API rule for listing and viewing records' },
+              viewRule: { type: 'string', description: 'API rule for viewing a single record' },
+              viewQuery: { type: 'string', description: 'SQL query for view collections' },
               passwordAuth: {
                 type: 'object',
                 description: 'Password authentication options',
                 properties: {
                   enabled: { type: 'boolean', description: 'Is password authentication enabled?' },
-                  identityFields: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'Fields used for identity in password authentication',
-                  },
+                  identityFields: { type: 'array', items: { type: 'string' }, description: 'Fields used for identity in password authentication' },
                 },
               },
             },
@@ -204,13 +145,11 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name',
-              },
+              collection: { type: 'string', description: 'Collection name' },
               data: {
                 type: 'object',
-                description: 'Record data',
+                description: 'Record data (any fields)',
+                additionalProperties: true,
               },
             },
             required: ['collection', 'data'],
@@ -222,26 +161,11 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name',
-              },
-              filter: {
-                type: 'string',
-                description: 'Filter query',
-              },
-              sort: {
-                type: 'string',
-                description: 'Sort field and direction',
-              },
-              page: {
-                type: 'number',
-                description: 'Page number',
-              },
-              perPage: {
-                type: 'number',
-                description: 'Items per page',
-              },
+              collection: { type: 'string', description: 'Collection name' },
+              filter: { type: 'string', description: 'Filter query' },
+              sort: { type: 'string', description: 'Sort field and direction' },
+              page: { type: 'number', description: 'Page number' },
+              perPage: { type: 'number', description: 'Items per page' },
             },
             required: ['collection'],
           },
@@ -252,17 +176,12 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name',
-              },
-              id: {
-                type: 'string',
-                description: 'Record ID',
-              },
+              collection: { type: 'string', description: 'Collection name' },
+              id: { type: 'string', description: 'Record ID' },
               data: {
                 type: 'object',
-                description: 'Updated record data',
+                description: 'Updated record data (any fields)',
+                additionalProperties: true,
               },
             },
             required: ['collection', 'id', 'data'],
@@ -274,31 +193,11 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name',
-              },
-              id: {
-                type: 'string',
-                description: 'Record ID',
-              },
+              collection: { type: 'string', description: 'Collection name' },
+              id: { type: 'string', description: 'Record ID' },
             },
             required: ['collection', 'id'],
           },
-        },
-        {
-          name: 'list_auth_methods',
-          description: 'List all available authentication methods',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            }
-          }
         },
         {
           name: 'authenticate_user',
@@ -306,240 +205,16 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              email: {
-                type: 'string',
-                description: 'User email',
-              },
-              password: {
-                type: 'string',
-                description: 'User password',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              },
+              email: { type: 'string', description: 'User email' },
+              password: { type: 'string', description: 'User password' },
+              collection: { type: 'string', description: 'Collection name (default: users)', default: 'users' },
               isAdmin: {
                 type: 'boolean',
                 description: 'Whether to authenticate as an admin (uses _superusers collection)',
-                default: false
-              }
+                default: false,
+              },
             },
             required: ['email', 'password'],
-          },
-        },
-        {
-          name: 'authenticate_with_oauth2',
-          description: 'Authenticate a user with OAuth2',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              provider: {
-                type: 'string',
-                description: 'OAuth2 provider name (e.g., google, facebook, github)',
-              },
-              code: {
-                type: 'string',
-                description: 'The authorization code returned from the OAuth2 provider',
-              },
-              codeVerifier: {
-                type: 'string',
-                description: 'PKCE code verifier',
-              },
-              redirectUrl: {
-                type: 'string',
-                description: 'The redirect URL used in the OAuth2 flow',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['provider', 'code', 'codeVerifier', 'redirectUrl'],
-          },
-        },
-        {
-          name: 'authenticate_with_otp',
-          description: 'Authenticate a user with one-time password',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              email: {
-                type: 'string',
-                description: 'User email',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['email'],
-          },
-        },
-        {
-          name: 'auth_refresh',
-          description: 'Refresh authentication token',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            }
-          },
-        },
-        {
-          name: 'request_verification',
-          description: 'Request email verification',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              email: {
-                type: 'string',
-                description: 'User email',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['email'],
-          },
-        },
-        {
-          name: 'confirm_verification',
-          description: 'Confirm email verification with token',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              token: {
-                type: 'string',
-                description: 'Verification token',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['token'],
-          },
-        },
-        {
-          name: 'request_password_reset',
-          description: 'Request password reset',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              email: {
-                type: 'string',
-                description: 'User email',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['email'],
-          },
-        },
-        {
-          name: 'confirm_password_reset',
-          description: 'Confirm password reset with token',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              token: {
-                type: 'string',
-                description: 'Reset token',
-              },
-              password: {
-                type: 'string',
-                description: 'New password',
-              },
-              passwordConfirm: {
-                type: 'string',
-                description: 'Confirm new password',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['token', 'password', 'passwordConfirm'],
-          },
-        },
-        {
-          name: 'request_email_change',
-          description: 'Request email change',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              newEmail: {
-                type: 'string',
-                description: 'New email address',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['newEmail'],
-          },
-        },
-        {
-          name: 'confirm_email_change',
-          description: 'Confirm email change with token',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              token: {
-                type: 'string',
-                description: 'Email change token',
-              },
-              password: {
-                type: 'string',
-                description: 'Current password for confirmation',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
-            },
-            required: ['token', 'password'],
-          },
-        },
-        {
-          name: 'impersonate_user',
-          description: 'Impersonate another user (admin only)',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              id: {
-                type: 'string',
-                description: 'ID of the user to impersonate',
-              },
-              collectionIdOrName: {
-                type: 'string',
-                description: 'Collection name or id (default: users)',
-                default: 'users'
-              },
-              duration: {
-                type: 'number',
-                description: 'Token expirey time (default: 3600)',
-                default: 3600
-              }
-            },
-            required: ['id'],
           },
         },
         {
@@ -548,27 +223,11 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              email: {
-                type: 'string',
-                description: 'User email',
-              },
-              password: {
-                type: 'string',
-                description: 'User password',
-              },
-              passwordConfirm: {
-                type: 'string',
-                description: 'Password confirmation',
-              },
-              name: {
-                type: 'string',
-                description: 'User name',
-              },
-              collection: {
-                type: 'string',
-                description: 'Collection name (default: users)',
-                default: 'users'
-              }
+              email: { type: 'string', description: 'User email' },
+              password: { type: 'string', description: 'User password' },
+              passwordConfirm: { type: 'string', description: 'Password confirmation' },
+              name: { type: 'string', description: 'User name' },
+              collection: { type: 'string', description: 'Collection name (default: users)', default: 'users' },
             },
             required: ['email', 'password', 'passwordConfirm'],
           },
@@ -579,14 +238,8 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collectionIdOrName: {
-                type: 'string',
-                description: 'ID or name of the collection to view',
-              },
-              fields: {
-                type: 'string',
-                description: 'Comma separated string of the fields to return in the JSON response',
-              },
+              collectionIdOrName: { type: 'string', description: 'ID or name of the collection to view' },
+              fields: { type: 'string', description: 'Comma separated string of the fields to return in the JSON response' },
             },
             required: ['collectionIdOrName'],
           },
@@ -597,10 +250,7 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              name: {
-                type: 'string',
-                description: 'backup name',
-              },
+              name: { type: 'string', description: 'backup name' },
             },
           },
         },
@@ -610,16 +260,11 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collection: {
-                type: 'string',
-                description: 'Collection name',
-              },
+              collection: { type: 'string', description: 'Collection name' },
               data: {
                 type: 'array',
                 description: 'Array of records to import',
-                items: {
-                  type: 'object',
-                },
+                items: { type: 'object' },
               },
               mode: {
                 type: 'string',
@@ -636,14 +281,8 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              filter: {
-                type: 'string',
-                description: 'Filter query for collections',
-              },
-              sort: {
-                type: 'string',
-                description: 'Sort order for collections',
-              },
+              filter: { type: 'string', description: 'Filter query for collections' },
+              sort: { type: 'string', description: 'Sort order for collections' },
             },
           },
         },
@@ -653,10 +292,7 @@ class PocketBaseServer {
           inputSchema: {
             type: 'object',
             properties: {
-              collectionIdOrName: {
-                type: 'string',
-                description: 'ID or name of the collection to delete',
-              },
+              collectionIdOrName: { type: 'string', description: 'ID or name of the collection to delete' },
             },
             required: ['collectionIdOrName'],
           },
@@ -687,6 +323,8 @@ class PocketBaseServer {
             return await this.getCollection(request.params.arguments);
           case 'backup_database':
             return await this.backupDatabase(request.params.arguments);
+          case 'import_data':
+            return await this.importData(request.params.arguments);
           case 'list_collections':
             return await this.listCollections(request.params.arguments);
           case 'delete_collection':
@@ -711,98 +349,46 @@ class PocketBaseServer {
 
   private async createCollection(args: any) {
     try {
-      // Authenticate with PocketBase
-      await this.pb.collection("_superusers").authWithPassword(process.env.POCKETBASE_ADMIN_EMAIL ?? '', process.env.POCKETBASE_ADMIN_PASSWORD ?? '');
+      await this.adminAuth();
 
       const defaultFields = [
-        {
-          hidden: false,
-          id: "autodate_created",
-          name: "created",
-          onCreate: true,
-          onUpdate: false,
-          presentable: false,
-          system: false,
-          type: "autodate"
-        },
-        {
-          hidden: false,
-          id: "autodate_updated",
-          name: "updated",
-          onCreate: true,
-          onUpdate: true,
-          presentable: false,
-          system: false,
-          type: "autodate"
-        }
+        { hidden: false, id: "autodate_created", name: "created", onCreate: true, onUpdate: false, presentable: false, system: false, type: "autodate" },
+        { hidden: false, id: "autodate_updated", name: "updated", onCreate: true, onUpdate: true, presentable: false, system: false, type: "autodate" }
       ];
 
-      const collectionData = {
-        ...args,
-        fields: [...(args.fields || []), ...defaultFields]
-      };
-
+      const collectionData = { ...args, fields: [...(args.fields || []), ...defaultFields] };
       const result = await this.pb.collections.create(collectionData as any);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to create collection: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to create collection: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async updateCollection(args: any) {
     try {
-      // Authenticate with PocketBase as admin
-      await this.pb.collection("_superusers").authWithPassword(process.env.POCKETBASE_ADMIN_EMAIL ?? '', process.env.POCKETBASE_ADMIN_PASSWORD ?? '');
-
+      await this.adminAuth();
       const { collectionIdOrName, ...updateData } = args;
       const result = await this.pb.collections.update(collectionIdOrName, updateData as any);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to update collection: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to update collection: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async createRecord(args: any) {
     try {
+      // Auth for listRule-closed collections
+      await this.adminAuth();
       const result = await this.pb.collection(args.collection).create(args.data);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to create record: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to create record: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async listRecords(args: any) {
     try {
+      await this.adminAuth();
       const options: any = {};
       if (args.filter) options.filter = args.filter;
       if (args.sort) options.sort = args.sort;
@@ -810,76 +396,40 @@ class PocketBaseServer {
       if (args.perPage) options.perPage = args.perPage;
 
       const result = await this.pb.collection(args.collection).getList(
-        options.page || 1,
-        options.perPage || 50,
-        {
-          filter: options.filter,
-          sort: options.sort,
-        }
+        options.page || 1, options.perPage || 50,
+        { filter: options.filter, sort: options.sort }
       );
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to list records: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to list records: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async updateRecord(args: any) {
     try {
-      const result = await this.pb
-        .collection(args.collection)
-        .update(args.id, args.data);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      // Auth for listRule-closed collections
+      await this.adminAuth();
+      const result = await this.pb.collection(args.collection).update(args.id, args.data);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to update record: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to update record: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async deleteRecord(args: any) {
     try {
+      // Auth for listRule-closed collections
+      await this.adminAuth();
       await this.pb.collection(args.collection).delete(args.id);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Successfully deleted record ${args.id} from collection ${args.collection}`,
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: `Successfully deleted record ${args.id} from collection ${args.collection}` }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to delete record: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to delete record: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async authenticateUser(args: any) {
     try {
-      // Use _superusers collection for admin authentication
       const collection = args.isAdmin ? '_superusers' : (args.collection || 'users');
-
-      // For admin authentication, use environment variables if email/password not provided
       const email = args.isAdmin && !args.email ? process.env.POCKETBASE_ADMIN_EMAIL : args.email;
       const password = args.isAdmin && !args.password ? process.env.POCKETBASE_ADMIN_PASSWORD : args.password;
 
@@ -887,107 +437,75 @@ class PocketBaseServer {
         throw new Error('Email and password are required for authentication');
       }
 
-      const authData = await this.pb
-        .collection(collection)
-        .authWithPassword(email, password);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(authData, null, 2),
-          },
-        ],
-      };
+      const authData = await this.pb.collection(collection).authWithPassword(email, password);
+      return { content: [{ type: 'text', text: JSON.stringify(authData, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Authentication failed: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Authentication failed: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async createUser(args: any) {
     try {
+      await this.adminAuth();
       const collection = args.collection || 'users';
       const result = await this.pb.collection(collection).create({
-        email: args.email,
-        password: args.password,
-        passwordConfirm: args.passwordConfirm,
-        name: args.name,
+        email: args.email, password: args.password,
+        passwordConfirm: args.passwordConfirm, name: args.name,
       });
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to create user: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to create user: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async getCollection(args: any) {
     try {
-      // Authenticate with PocketBase
-      await this.pb.collection("_superusers").authWithPassword(process.env.POCKETBASE_ADMIN_EMAIL ?? '', process.env.POCKETBASE_ADMIN_PASSWORD ?? '');
-
-      // Get collection details
-      const collection = await this.pb.collections.getOne(args.collectionIdOrName, {
-        fields: args.fields
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(collection, null, 2),
-          },
-        ],
-      };
+      await this.adminAuth();
+      const collection = await this.pb.collections.getOne(args.collectionIdOrName, { fields: args.fields });
+      return { content: [{ type: 'text', text: JSON.stringify(collection, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to get collection: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to get collection: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async backupDatabase(args: any) {
     try {
-      // Authenticate with PocketBase
-      await this.pb.collection("_superusers").authWithPassword(process.env.POCKETBASE_ADMIN_EMAIL ?? '', process.env.POCKETBASE_ADMIN_PASSWORD ?? '');
-
-      // Create a new backup
+      await this.adminAuth();
       const backupResult = await this.pb.backups.create(args.name ?? '', {});
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(backupResult, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(backupResult, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to backup database: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to backup database: ${pocketbaseErrorMessage(error)}`);
+    }
+  }
+
+  private async importData(args: any) {
+    try {
+      await this.adminAuth();
+      const collection = args.collection;
+      const mode = args.mode || 'create';
+      for (const record of args.data) {
+        if (mode === 'update') {
+          await this.pb.collection(collection).update(record.id, record);
+        } else if (mode === 'upsert') {
+          try {
+            await this.pb.collection(collection).getFirstListItem(`id = "${record.id}"`);
+            await this.pb.collection(collection).update(record.id, record);
+          } catch {
+            await this.pb.collection(collection).create(record);
+          }
+        } else {
+          await this.pb.collection(collection).create(record);
+        }
+      }
+      return { content: [{ type: 'text', text: `Successfully imported ${args.data.length} records in ${mode} mode` }] };
+    } catch (error: unknown) {
+      throw new McpError(ErrorCode.InternalError, `Failed to import data: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async listCollections(args: any) {
     try {
-      // Authenticate with PocketBase
-      await this.pb.collection("_superusers").authWithPassword(process.env.POCKETBASE_ADMIN_EMAIL ?? '', process.env.POCKETBASE_ADMIN_PASSWORD ?? '');
-
-      // Fetch collections based on provided arguments
+      await this.adminAuth();
       let collections;
       if (args.filter) {
         collections = await this.pb.collections.getFirstListItem(args.filter);
@@ -996,44 +514,19 @@ class PocketBaseServer {
       } else {
         collections = await this.pb.collections.getList(1, 100);
       }
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(collections, null, 2),
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: JSON.stringify(collections, null, 2) }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to list collections: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to list collections: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
   private async deleteCollection(args: any) {
     try {
-      // Authenticate with PocketBase as admin (required for collection deletion)
-      await this.pb.collection("_superusers").authWithPassword(process.env.POCKETBASE_ADMIN_EMAIL ?? '', process.env.POCKETBASE_ADMIN_PASSWORD ?? '');
-
-      // Delete the collection
+      await this.adminAuth();
       await this.pb.collections.delete(args.collectionIdOrName);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Successfully deleted collection ${args.collectionIdOrName}`,
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: `Successfully deleted collection ${args.collectionIdOrName}` }] };
     } catch (error: unknown) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to delete collection: ${pocketbaseErrorMessage(error)}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to delete collection: ${pocketbaseErrorMessage(error)}`);
     }
   }
 
@@ -1054,29 +547,23 @@ export function flattenErrors(errors: unknown): string[] {
   } else if (typeof errors === "object" && errors !== null) {
     const errorObject = errors as Record<string, any>;
 
-    // Handle objects with message property directly
     if (errorObject.message) {
       return [errorObject.message, ...flattenErrors(errorObject.data || {})];
     }
 
-    // Handle nested objects with code/message structure
     if (errorObject.data) {
       const messages: string[] = [];
-
       for (const key in errorObject.data) {
         const value = errorObject.data[key];
         if (typeof value === "object" && value !== null) {
-          // Always recursively process the value to extract all messages
           messages.push(...flattenErrors(value));
         }
       }
-
       if (messages.length > 0) {
         return messages;
       }
     }
 
-    // Process all object values recursively
     return Object.values(errorObject).flatMap(flattenErrors);
   } else if (typeof errors === "string") {
     return [errors];
@@ -1089,3 +576,4 @@ export function pocketbaseErrorMessage(errors: unknown): string {
   const messages = flattenErrors(errors);
   return messages.length > 0 ? messages.join("\n") : "No errors found";
 }
+
