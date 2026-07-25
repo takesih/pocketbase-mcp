@@ -701,7 +701,7 @@ class PocketBaseServer {
 
   private async listAuthMethods(args: any) {
     try {
-      const methods = await this.pb.collection('_users').listAuthMethods();
+      const methods = await this.pb.collection('users').listAuthMethods();
       return { content: [{ type: 'text', text: JSON.stringify(methods, null, 2) }] };
     } catch (error: unknown) {
       throw new McpError(ErrorCode.InternalError, `Failed to list auth methods: ${pocketbaseErrorMessage(error)}`);
@@ -710,7 +710,7 @@ class PocketBaseServer {
 
   private async authenticateWithOAuth2(args: any) {
     try {
-      const result = await this.pb.collection('_users').authWithOAuth2Code(
+      const result = await this.pb.collection('users').authWithOAuth2Code(
         args.provider,
         args.code,
         args.codeVerifier,
@@ -724,7 +724,7 @@ class PocketBaseServer {
 
   private async authenticateWithOTP(args: any) {
     try {
-      const result = await this.pb.collection('_users').requestOTP(args.email);
+      const result = await this.pb.collection('users').requestOTP(args.email);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
       throw new McpError(ErrorCode.InternalError, `OTP authentication failed: ${pocketbaseErrorMessage(error)}`);
@@ -734,7 +734,7 @@ class PocketBaseServer {
   private async requestVerification(args: any) {
     try {
       await this.adminAuth();
-      const result = await this.pb.collection('_users').requestVerification(args.email);
+      const result = await this.pb.collection('users').requestVerification(args.email);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
       throw new McpError(ErrorCode.InternalError, `Failed to request verification: ${pocketbaseErrorMessage(error)}`);
@@ -743,7 +743,7 @@ class PocketBaseServer {
 
   private async confirmVerification(args: any) {
     try {
-      const result = await this.pb.collection('_users').confirmVerification(args.token);
+      const result = await this.pb.collection('users').confirmVerification(args.token);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
       throw new McpError(ErrorCode.InternalError, `Failed to confirm verification: ${pocketbaseErrorMessage(error)}`);
@@ -753,7 +753,7 @@ class PocketBaseServer {
   private async requestPasswordReset(args: any) {
     try {
       await this.adminAuth();
-      const result = await this.pb.collection('_users').requestPasswordReset(args.email);
+      const result = await this.pb.collection('users').requestPasswordReset(args.email);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
       throw new McpError(ErrorCode.InternalError, `Failed to request password reset: ${pocketbaseErrorMessage(error)}`);
@@ -762,7 +762,7 @@ class PocketBaseServer {
 
   private async confirmPasswordReset(args: any) {
     try {
-      const result = await this.pb.collection('_users').confirmPasswordReset(
+      const result = await this.pb.collection('users').confirmPasswordReset(
         args.token,
         args.newPassword,
         args.confirmNewPassword ?? args.newPassword,
@@ -775,7 +775,7 @@ class PocketBaseServer {
 
   private async requestEmailChange(args: any) {
     try {
-      const result = await this.pb.collection('_users').requestEmailChange(args.newEmail);
+      const result = await this.pb.collection('users').requestEmailChange(args.newEmail);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error: unknown) {
       throw new McpError(ErrorCode.InternalError, `Failed to request email change: ${pocketbaseErrorMessage(error)}`);
@@ -784,7 +784,7 @@ class PocketBaseServer {
 
   private async confirmEmailChange(args: any) {
     try {
-      const result = await this.pb.collection('_users').confirmEmailChange(
+      const result = await this.pb.collection('users').confirmEmailChange(
         args.token,
         args.password || '',
       );
@@ -797,7 +797,7 @@ class PocketBaseServer {
   private async impersonateUser(args: any) {
     try {
       await this.adminAuth();
-      const result = await this.pb.collection('_users').impersonate(
+      const result = await this.pb.collection('users').impersonate(
         args.userId,
         args.durationSeconds || 3600,
       );
