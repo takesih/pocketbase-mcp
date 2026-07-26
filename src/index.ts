@@ -1,6 +1,7 @@
 
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
@@ -53,6 +54,28 @@ class PocketBaseServer {
     this.setupToolHandlers();
 
     this.server.onerror = (error: unknown) => console.error('[MCP Error]', error);
+
+  // Session management for SSE mode
+  private sessions: Map<string, SSEServerTransport> = new Map();
+  
+  createSSETransport(req: any, res: any): SSEServerTransport {
+    const transport = new SSEServerTransport('/sse', res);
+    this.sessions.set(transport._sessionId, transport);
+    return transport;
+  }
+  
+  getTransportForSession(sessionId: string): SSEServerTransport | undefined {
+    return this.sessions.get(sessionId);
+  }
+  
+  async connectTransport(transport: SSEServerTransport) {
+    transport.onclose = () => {
+      this.sessions.delete(transport._sessionId);
+    };
+    await this.server.connect(transport);
+    await this.server.start();
+  }
+
     process.on('SIGINT', async () => {
       await this.server.close();
       process.exit(0);
@@ -868,3 +891,78 @@ export function pocketbaseErrorMessage(errors: unknown): string {
   const messages = flattenErrors(errors);
   return messages.length > 0 ? messages.join("\n") : "No errors found";
 }
+
+// Main execution
+async function main() {
+  const url = process.env.POCKETBASE_URL;
+  const apiKey = process.env.POCKETBASE_API_KEY;
+  const port = parseInt(process.env.PORT || '3000', 10);
+  
+  if (!url) {
+    throw new Error('POCKETBASE_URL environment variable is required');
+  }
+  
+  // HTTP/SSE mode - when POCKETBASE_PORT is set
+  if (process.env.POCKETBASE_HTTP_MODE === 'true') {
+    const http = await import('http');
+    const pbServer = new PocketBaseServer();
+    
+    const server = http.createServer(async (req, res) => {
+      // CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+      
+      // API Key validation
+      const authHeader = req.headers.authorization || '';
+      const bearerKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      
+      if (!apiKey || bearerKey !== apiKey) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      
+      // Extract session ID from URL for POST requests
+      const urlObj = new URL(req.url || '/', `http://localhost:${port}`);
+      const sessionId = urlObj.searchParams.get('sessionId');
+      
+      // POST - handle messages
+      if (req.method === 'POST' && sessionId) {
+        const transport = pbServer.getTransportForSession(sessionId);
+        if (transport) {
+          await transport.handlePostMessage(req, res);
+          return;
+        }
+      }
+      
+      // GET - SSE connection
+      if (req.method === 'GET' && req.url?.startsWith('/sse')) {
+        const transport = pbServer.createSSETransport(req, res);
+        await pbServer.connectTransport(transport);
+        return;
+      }
+      
+      res.writeHead(404);
+      res.end('Not found');
+    });
+    
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`PocketBase MCP server running on SSE (port ${port})`);
+    });
+  } else {
+    // Stdio mode - original behavior
+    const transport = new StdioServerTransport();
+    const pbServer = new PocketBaseServer();
+    await pbServer.server.connect(transport);
+    await pbServer.server.start();
+  }
+}
+
+main().catch(console.error);
