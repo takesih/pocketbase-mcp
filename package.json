@@ -1,13 +1,13 @@
 {
   "name": "pocketbase-server",
   "version": "0.1.0",
-  "type": "module",
+
   "bin": {
     "pocketbase-server": "./build/index.js"
   },
   "scripts": {
     "build": "tsc && npm run bundle",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=build/index.js --banner:js=\"#!/usr/bin/env node\" --allow-overwrite",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=build/index.js --banner:js=\"#!/usr/bin/env node\" --allow-overwrite",
     "prestart": "npm run build",
     "start": "node build/index.js",
     "dev": "tsc -w"
