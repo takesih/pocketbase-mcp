@@ -1,7 +1,7 @@
 
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
@@ -54,32 +54,30 @@ class PocketBaseServer {
     this.setupToolHandlers();
 
     this.server.onerror = (error: unknown) => console.error('[MCP Error]', error);
-
-  // Session management for SSE mode
-  private sessions: Map<string, SSEServerTransport> = new Map();
-  
-  createSSETransport(req: any, res: any): SSEServerTransport {
-    const transport = new SSEServerTransport('/sse', res);
-    this.sessions.set(transport._sessionId, transport);
-    return transport;
-  }
-  
-  getTransportForSession(sessionId: string): SSEServerTransport | undefined {
-    return this.sessions.get(sessionId);
-  }
-  
-  async connectTransport(transport: SSEServerTransport) {
-    transport.onclose = () => {
-      this.sessions.delete(transport._sessionId);
-    };
-    await this.server.connect(transport);
-    await this.server.start();
-  }
-
     process.on('SIGINT', async () => {
       await this.server.close();
       process.exit(0);
     });
+  }
+
+  // Session management for SSE mode
+  private sessions: Map<string, SSEServerTransport> = new Map();
+
+  createSSETransport(req: any, res: any): SSEServerTransport {
+    const transport = new SSEServerTransport('/sse', res);
+    this.sessions.set(transport.sessionId, transport);
+    return transport;
+  }
+
+  getTransportForSession(sessionId: string): SSEServerTransport | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  async connectTransport(transport: SSEServerTransport) {
+    transport.onclose = () => {
+      this.sessions.delete(transport.sessionId);
+    };
+    await this.server.connect(transport);
   }
 
   private async adminAuth() {
@@ -958,10 +956,8 @@ async function main() {
     });
   } else {
     // Stdio mode - original behavior
-    const transport = new StdioServerTransport();
     const pbServer = new PocketBaseServer();
-    await pbServer.server.connect(transport);
-    await pbServer.server.start();
+    await pbServer.run();
   }
 }
 
