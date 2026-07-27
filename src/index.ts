@@ -81,27 +81,34 @@ class PocketBaseServer {
   }
 
   private async adminAuth() {
-    // Basic Auth from Authorization header (Base64 encoded email:password)
-    const authHeader = process.env.POCKETBASE_AUTH_HEADER;
-    if (authHeader && authHeader.startsWith('Basic ')) {
-      try {
-        const base64Credentials = authHeader.slice(6);
-        const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
-        const [email, password] = credentials.split(':');
-        if (email && password) {
-          await this.pb.collection('_superusers').authWithPassword(email, password);
-          return;
+      // Prefer API Key authentication if provided
+      const apiKey = process.env.POCKETBASE_API_KEY;
+      if (apiKey) {
+        // PocketBase SDK stores the token directly in authStore
+        this.pb.authStore.save(apiKey, null);
+        return;
+      }
+      // Fallback to Basic Auth from Authorization header (Base64 encoded email:password)
+      const authHeader = process.env.POCKETBASE_AUTH_HEADER;
+      if (authHeader && authHeader.startsWith('Basic ')) {
+        try {
+          const base64Credentials = authHeader.slice(6);
+          const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+          const [email, password] = credentials.split(':');
+          if (email && password) {
+            await this.pb.collection('_superusers').authWithPassword(email, password);
+            return;
+          }
+        } catch (e) {
+          console.error('Failed to parse Basic Auth header:', e);
         }
-      } catch (e) {
-        console.error('Failed to parse Basic Auth header:', e);
+      }
+      const email = process.env.POCKETBASE_ADMIN_EMAIL ?? '';
+      const password = process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
+      if (email && password) {
+        await this.pb.collection('_superusers').authWithPassword(email, password);
       }
     }
-    const email = process.env.POCKETBASE_ADMIN_EMAIL ?? '';
-    const password = process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
-    if (email && password) {
-      await this.pb.collection('_superusers').authWithPassword(email, password);
-    }
-  }
 
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
