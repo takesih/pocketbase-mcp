@@ -9,8 +9,8 @@ WORKDIR /app
 ARG REPO_URL="https://github.com/takesih/pocketbase-mcp.git"
 RUN git clone "$REPO_URL" .
 
-# Install production dependencies and build the project
-RUN npm ci --no-fund --no-audit
+# Install dependencies and build the project
+RUN npm install --no-fund --no-audit
 RUN npm run build
 
 FROM node:20-alpine
