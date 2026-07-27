@@ -21,9 +21,6 @@ COPY --from=builder /app/build ./build
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
-# PocketBase connection URL — safe to bake into image (public endpoint).
-ENV POCKETBASE_URL=https://pb-fc.laonflow.xyz
-
 # HTTP/SSE mode (no mcp-proxy wrapper — native SSE in our index.ts)
 ENV POCKETBASE_HTTP_MODE=true
 ENV PORT=80

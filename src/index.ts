@@ -30,7 +30,8 @@ function assignFieldIds(fields: any[]): any[] {
 
 class PocketBaseServer {
   private server: Server;
-  private pb: PocketBase;
+  private pb!: PocketBase;
+  private sseConfig: Record<string, string> = {};
 
   constructor() {
     this.server = new Server(
@@ -45,11 +46,11 @@ class PocketBaseServer {
       }
     );
 
+    // If POCKETBASE_URL is in env, initialize immediately (backward compat for stdio mode)
     const url = process.env.POCKETBASE_URL;
-    if (!url) {
-      throw new Error('POCKETBASE_URL environment variable is required');
+    if (url) {
+      this.pb = new PocketBase(url);
     }
-    this.pb = new PocketBase(url);
 
     this.setupToolHandlers();
 
@@ -58,6 +59,36 @@ class PocketBaseServer {
       await this.server.close();
       process.exit(0);
     });
+  }
+
+  /** Look up a value from SSE headers first, then fall back to env vars. */
+  private getHeader(name: string): string | undefined {
+    const lowerName = name.toLowerCase();
+    if (this.sseConfig[lowerName]) return this.sseConfig[lowerName];
+    const envMap: Record<string, string> = {
+      'x-pocketbase-url': 'POCKETBASE_URL',
+      'x-pocketbase-admin-email': 'POCKETBASE_ADMIN_EMAIL',
+      'x-pocketbase-admin-password': 'POCKETBASE_ADMIN_PASSWORD',
+      'x-pocketbase-api-key': 'POCKETBASE_API_KEY',
+    };
+    const envName = envMap[lowerName];
+    return envName ? process.env[envName] : undefined;
+  }
+
+  /** Configure PocketBase connection from SSE request headers. */
+  configureFromHeaders(headers: Record<string, string | string[] | undefined>) {
+    for (const [key, value] of Object.entries(headers)) {
+      if (value && typeof value === 'string') {
+        this.sseConfig[key.toLowerCase()] = value;
+      }
+    }
+    if (!this.pb) {
+      const url = this.getHeader('X-Pocketbase-Url');
+      if (!url) {
+        throw new Error('PocketBase URL is required — set X-Pocketbase-Url header or POCKETBASE_URL env');
+      }
+      this.pb = new PocketBase(url);
+    }
   }
 
   // Session management for SSE mode
@@ -81,8 +112,11 @@ class PocketBaseServer {
   }
 
   private async adminAuth() {
+      if (!this.pb) {
+        throw new Error('PocketBase not initialized. Ensure SSE connection has X-Pocketbase-Url header or set POCKETBASE_URL env.');
+      }
       // Prefer API Key authentication if provided
-      const apiKey = process.env.POCKETBASE_API_KEY;
+      const apiKey = this.getHeader('X-Pocketbase-Api-Key') || process.env.POCKETBASE_API_KEY;
       if (apiKey) {
         // PocketBase SDK stores the token directly in authStore
         this.pb.authStore.save(apiKey, null);
@@ -103,8 +137,9 @@ class PocketBaseServer {
           console.error('Failed to parse Basic Auth header:', e);
         }
       }
-      const email = process.env.POCKETBASE_ADMIN_EMAIL ?? '';
-      const password = process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
+      // Fallback to email/password from SSE headers or env
+      const email = this.getHeader('X-Pocketbase-Admin-Email') ?? process.env.POCKETBASE_ADMIN_EMAIL ?? '';
+      const password = this.getHeader('X-Pocketbase-Admin-Password') ?? process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
       if (email && password) {
         await this.pb.collection('_superusers').authWithPassword(email, password);
       }
@@ -903,8 +938,10 @@ async function main() {
   const apiKey = process.env.POCKETBASE_API_KEY;
   const port = parseInt(process.env.PORT || '3000', 10);
   
-  if (!url) {
-    throw new Error('POCKETBASE_URL environment variable is required');
+  // URL can come from SSE request headers (X-Pocketbase-Url) or env var
+  // In stdio mode the env var is required
+  if (!url && process.env.POCKETBASE_HTTP_MODE !== 'true') {
+    throw new Error('POCKETBASE_URL environment variable is required for stdio mode');
   }
   
   // HTTP/SSE mode - when POCKETBASE_PORT is set
@@ -924,14 +961,15 @@ async function main() {
         return;
       }
       
-      // API Key validation
-      const authHeader = req.headers.authorization || '';
-      const bearerKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-      
-      if (!apiKey || bearerKey !== apiKey) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
+      // API Key validation — only if POCKETBASE_API_KEY is configured
+      if (apiKey) {
+        const authHeader = req.headers.authorization || '';
+        const bearerKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+        if (bearerKey !== apiKey) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized' }));
+          return;
+        }
       }
       
       // Extract session ID from URL for POST requests
@@ -949,6 +987,7 @@ async function main() {
       
       // GET - SSE connection
       if (req.method === 'GET' && req.url?.startsWith('/sse')) {
+        pbServer.configureFromHeaders(req.headers);
         const transport = pbServer.createSSETransport(req, res);
         await pbServer.connectTransport(transport);
         return;
