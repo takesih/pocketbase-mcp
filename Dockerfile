@@ -1,11 +1,16 @@
 FROM node:20-alpine AS builder
 
+# Install git to fetch source from remote repository
+RUN apk add --no-cache git
+
 WORKDIR /app
 
-COPY package.json package-lock.json* tsconfig.json ./
-COPY src/ ./src/
+# Clone the repository (default to official source) and install dependencies
+ARG REPO_URL="https://github.com/takesih/pocketbase-mcp.git"
+RUN git clone "$REPO_URL" .
 
-RUN npm install --no-fund --no-audit
+# Install production dependencies and build the project
+RUN npm ci --no-fund --no-audit
 RUN npm run build
 
 FROM node:20-alpine
