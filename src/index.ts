@@ -2,7 +2,9 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -10,6 +12,17 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import PocketBase from 'pocketbase';
+import { randomUUID } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
 
 function generateFieldId(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -32,6 +45,10 @@ class PocketBaseServer {
   private server: Server;
   private pb!: PocketBase;
   private sseConfig: Record<string, string> = {};
+
+  getServer(): Server {
+    return this.server;
+  }
 
   constructor() {
     this.server = new Server(
@@ -944,20 +961,20 @@ async function main() {
   if (process.env.POCKETBASE_HTTP_MODE === 'true') {
     const http = await import('http');
     const pbServer = new PocketBaseServer();
-    
+
+    const streamableTransports: Record<string, StreamableHTTPServerTransport> = {};
+
     const server = http.createServer(async (req, res) => {
-      // CORS headers
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Pocketbase-Url, X-Pocketbase-Admin-Email, X-Pocketbase-Admin-Password, X-Pocketbase-Api-Key');
-      
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Pocketbase-Url, X-Pocketbase-Admin-Email, X-Pocketbase-Admin-Password, X-Pocketbase-Api-Key, Mcp-Session-Id');
+
       if (req.method === 'OPTIONS') {
         res.writeHead(200);
         res.end();
         return;
       }
-      
-      // API Key validation — only if POCKETBASE_API_KEY is configured
+
       if (apiKey) {
         const authHeader = req.headers.authorization || '';
         const bearerKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -967,12 +984,67 @@ async function main() {
           return;
         }
       }
-      
-      // Extract session ID from URL for POST requests
+
+      if (req.url?.startsWith('/mcp')) {
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        let transport: StreamableHTTPServerTransport;
+
+        if (sessionId && streamableTransports[sessionId]) {
+          transport = streamableTransports[sessionId];
+        } else if (req.method === 'POST') {
+          const rawBody = await readBody(req);
+          let parsedBody: unknown;
+          try { parsedBody = JSON.parse(rawBody); } catch { parsedBody = rawBody; }
+
+          if (!sessionId && isInitializeRequest(parsedBody)) {
+            const perReqPbServer = new PocketBaseServer();
+            perReqPbServer.configureFromHeaders(req.headers);
+            const transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+              onsessioninitialized: (sid) => {
+                streamableTransports[sid] = transport;
+              },
+            });
+            transport.onclose = () => {
+              const sid = transport.sessionId;
+              if (sid && streamableTransports[sid]) {
+                delete streamableTransports[sid];
+              }
+            };
+            await perReqPbServer.getServer().connect(transport);
+            await transport.handleRequest(req, res, parsedBody);
+            return;
+          }
+
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+            id: null,
+          }));
+          return;
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+            id: null,
+          }));
+          return;
+        }
+
+        let parsedBody: unknown;
+        if (req.method === 'POST') {
+          const rawBody = await readBody(req);
+          try { parsedBody = JSON.parse(rawBody); } catch { parsedBody = rawBody; }
+        }
+        await transport.handleRequest(req, res, parsedBody);
+        return;
+      }
+
       const urlObj = new URL(req.url || '/', `http://localhost:${port}`);
       const sessionId = urlObj.searchParams.get('sessionId');
-      
-      // POST - handle messages
+
       if (req.method === 'POST' && sessionId) {
         const transport = pbServer.getTransportForSession(sessionId);
         if (transport) {
@@ -980,21 +1052,22 @@ async function main() {
           return;
         }
       }
-      
-      // GET - SSE connection
+
       if (req.method === 'GET' && req.url?.startsWith('/sse')) {
         pbServer.configureFromHeaders(req.headers);
         const transport = pbServer.createSSETransport(req, res);
         await pbServer.connectTransport(transport);
         return;
       }
-      
+
       res.writeHead(404);
       res.end('Not found');
     });
-    
+
     server.listen(port, '0.0.0.0', () => {
-      console.log(`PocketBase MCP server running on SSE (port ${port})`);
+      console.log(`PocketBase MCP server running on Streamable HTTP + legacy SSE (port ${port})`);
+      console.log(`  Streamable HTTP: POST/GET/DELETE http://localhost:${port}/mcp`);
+      console.log(`  Legacy SSE:      GET http://localhost:${port}/sse`);
     });
   } else {
     // Stdio mode - original behavior
