@@ -33,4 +33,5 @@ pb_migrations/
 .DS_Store
 Thumbs.db
 
-.env
+# omo/orchestration local state (session data, plans, runs)
+.omo/
