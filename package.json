@@ -14,7 +14,7 @@
     "dev": "tsc -w"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.6.1",
+    "@modelcontextprotocol/sdk": "^1.10.0",
     "pocketbase": "^0.26.1"
   },
   "devDependencies": {
