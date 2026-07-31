@@ -995,7 +995,7 @@ async function main() {
           const rawBody = await readBody(req);
           let parsedBody: unknown;
           try { parsedBody = JSON.parse(rawBody); } catch { parsedBody = rawBody; }
-          console.error('[mcp] POST rawBody:', rawBody.slice(0, 200), 'parsed:', JSON.stringify(parsedBody)?.slice(0, 200), 'isInit:', isInitializeRequest(parsedBody));
+          console.error('[mcp] POST rawBody len:', rawBody.length, 'raw:', rawBody, 'parseErr:', (() => { try { return JSON.parse(rawBody); } catch (e: any) { return e.message; } })());
 
           if (!sessionId && isInitializeRequest(parsedBody)) {
             const perReqPbServer = new PocketBaseServer();
