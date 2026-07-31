@@ -892,10 +892,6 @@ class PocketBaseServer {
   }
 }
 
-const server = new PocketBaseServer();
-server.run().catch(console.error);
-
-
 export function flattenErrors(errors: unknown): string[] {
   if (Array.isArray(errors)) {
     return errors.flatMap(flattenErrors);
@@ -953,7 +949,7 @@ async function main() {
       // CORS headers
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Pocketbase-Url, X-Pocketbase-Admin-Email, X-Pocketbase-Admin-Password, X-Pocketbase-Api-Key');
       
       if (req.method === 'OPTIONS') {
         res.writeHead(200);

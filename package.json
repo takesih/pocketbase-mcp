@@ -1,6 +1,7 @@
 {
   "name": "pocketbase-server",
   "version": "0.1.0",
+  "type": "module",
 
   "bin": {
     "pocketbase-server": "./build/index.js"
