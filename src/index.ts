@@ -125,8 +125,10 @@ class PocketBaseServer {
   async connectTransport(transport: SSEServerTransport) {
     transport.onclose = () => {
       PocketBaseServer._sessions.delete(transport.sessionId);
-      // Best-effort close of this per-request Server so node can exit cleanly.
-      this.server.close().catch(() => { });
+      // Don't call this.server.close() here — MCP SDK closes the transport from
+      // inside Server.close() (protocol.js:501), and our Server owns this
+      // transport, so closing again triggers `Maximum call stack size exceeded`
+      // via PromiseRejectCallback recursion in sse.js:149.
     };
     await this.server.connect(transport);
   }
