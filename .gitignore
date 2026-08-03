@@ -35,3 +35,6 @@ Thumbs.db
 
 # omo/orchestration local state (session data, plans, runs)
 .omo/
+
+# omp local MCP/server config (per-worktree; contains credentials)
+.omp/

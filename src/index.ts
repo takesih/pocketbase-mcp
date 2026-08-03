@@ -72,10 +72,7 @@ class PocketBaseServer {
     this.setupToolHandlers();
 
     this.server.onerror = (error: unknown) => console.error('[MCP Error]', error);
-    process.on('SIGINT', async () => {
-      await this.server.close();
-      process.exit(0);
-    });
+    // SIGINT handler is registered exactly once at module scope (see bottom of file).
   }
 
   /** Look up a value from SSE headers first, then fall back to env vars. */
@@ -108,59 +105,65 @@ class PocketBaseServer {
     }
   }
 
-  // Session management for SSE mode
-  private sessions: Map<string, SSEServerTransport> = new Map();
+  // Static so legacy `POST ?sessionId=…` resumes work regardless of which
+  // PocketBaseServer instance owns the transport — each /sse request creates
+  // its own instance to avoid `Already connected to a transport` errors.
+  private static _sessions: Map<string, SSEServerTransport> = new Map();
+  /** Read-only accessor for the module-scope SIGINT handler below. */
+  static getSessions(): Map<string, SSEServerTransport> { return PocketBaseServer._sessions; }
 
-  createSSETransport(req: any, res: any): SSEServerTransport {
+  createSSETransport(_req: any, res: any): SSEServerTransport {
     const transport = new SSEServerTransport('/sse', res);
-    this.sessions.set(transport.sessionId, transport);
+    PocketBaseServer._sessions.set(transport.sessionId, transport);
     return transport;
   }
 
-  getTransportForSession(sessionId: string): SSEServerTransport | undefined {
-    return this.sessions.get(sessionId);
+  static getTransportForSession(sessionId: string): SSEServerTransport | undefined {
+    return PocketBaseServer._sessions.get(sessionId);
   }
 
   async connectTransport(transport: SSEServerTransport) {
     transport.onclose = () => {
-      this.sessions.delete(transport.sessionId);
+      PocketBaseServer._sessions.delete(transport.sessionId);
+      // Best-effort close of this per-request Server so node can exit cleanly.
+      this.server.close().catch(() => { });
     };
     await this.server.connect(transport);
   }
 
   private async adminAuth() {
-      if (!this.pb) {
-        throw new Error('PocketBase not initialized. Ensure SSE connection has X-Pocketbase-Url header or set POCKETBASE_URL env.');
-      }
-      // Prefer API Key authentication if provided
-      const apiKey = this.getHeader('X-Pocketbase-Api-Key') || process.env.POCKETBASE_API_KEY;
-      if (apiKey) {
-        // PocketBase SDK stores the token directly in authStore
-        this.pb.authStore.save(apiKey, null);
-        return;
-      }
-      // Fallback to Basic Auth from Authorization header (Base64 encoded email:password)
-      const authHeader = process.env.POCKETBASE_AUTH_HEADER;
-      if (authHeader && authHeader.startsWith('Basic ')) {
-        try {
-          const base64Credentials = authHeader.slice(6);
-          const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
-          const [email, password] = credentials.split(':');
-          if (email && password) {
-            await this.pb.collection('_superusers').authWithPassword(email, password);
-            return;
-          }
-        } catch (e) {
-          console.error('Failed to parse Basic Auth header:', e);
+    if (!this.pb) {
+      throw new Error('PocketBase not initialized. Ensure SSE connection has X-Pocketbase-Url header or set POCKETBASE_URL env.');
+    }
+    // Prefer API Key authentication if provided
+    const apiKey = this.getHeader('X-Pocketbase-Api-Key') || process.env.POCKETBASE_API_KEY;
+    if (apiKey) {
+      // PocketBase SDK stores the token directly in authStore
+      this.pb.authStore.save(apiKey, null);
+      return;
+    }
+    // Fallback to Basic Auth from Authorization header (Base64 encoded email:password)
+    const authHeader = process.env.POCKETBASE_AUTH_HEADER;
+    if (authHeader && authHeader.startsWith('Basic ')) {
+      try {
+        const base64Credentials = authHeader.slice(6);
+        const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+        const [email, password] = credentials.split(':');
+        if (email && password) {
+          await this.pb.collection('_superusers').authWithPassword(email, password);
+          return;
         }
-      }
-      // Fallback to email/password from SSE headers or env
-      const email = this.getHeader('X-Pocketbase-Admin-Email') ?? process.env.POCKETBASE_ADMIN_EMAIL ?? '';
-      const password = this.getHeader('X-Pocketbase-Admin-Password') ?? process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
-      if (email && password) {
-        await this.pb.collection('_superusers').authWithPassword(email, password);
+      } catch (e) {
+        console.error('Failed to parse Basic Auth header:', e);
       }
     }
+    // Fallback to email/password from SSE headers or env
+    const email = this.getHeader('X-Pocketbase-Admin-Email') ?? process.env.POCKETBASE_ADMIN_EMAIL ?? '';
+    const password = this.getHeader('X-Pocketbase-Admin-Password') ?? process.env.POCKETBASE_ADMIN_PASSWORD ?? '';
+    if (email && password) {
+      await this.pb.collection('_superusers').authWithPassword(email, password);
+    }
+  }
 
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -950,17 +953,19 @@ async function main() {
   const url = process.env.POCKETBASE_URL;
   const apiKey = process.env.POCKETBASE_API_KEY;
   const port = parseInt(process.env.PORT || '3000', 10);
-  
+
   // URL can come from SSE request headers (X-Pocketbase-Url) or env var
   // In stdio mode the env var is required
   if (!url && process.env.POCKETBASE_HTTP_MODE !== 'true') {
     throw new Error('POCKETBASE_URL environment variable is required for stdio mode');
   }
-  
+
   // HTTP/SSE mode - when POCKETBASE_PORT is set
   if (process.env.POCKETBASE_HTTP_MODE === 'true') {
     const http = await import('http');
-    const pbServer = new PocketBaseServer();
+    // Per-request `PocketBaseServer` instances are now created inside the
+    // request handlers below; sessions live on `PocketBaseServer._sessions`
+    // (private static) so legacy `POST ?sessionId=…` resumes route cross-instance.
 
     const streamableTransports: Record<string, StreamableHTTPServerTransport> = {};
 
@@ -1047,7 +1052,7 @@ async function main() {
       const sessionId = urlObj.searchParams.get('sessionId');
 
       if (req.method === 'POST' && sessionId) {
-        const transport = pbServer.getTransportForSession(sessionId);
+        const transport = PocketBaseServer.getTransportForSession(sessionId);
         if (transport) {
           await transport.handlePostMessage(req, res);
           return;
@@ -1055,9 +1060,13 @@ async function main() {
       }
 
       if (req.method === 'GET' && req.url?.startsWith('/sse')) {
-        pbServer.configureFromHeaders(req.headers);
-        const transport = pbServer.createSSETransport(req, res);
-        await pbServer.connectTransport(transport);
+        // Create a fresh PocketBaseServer per request: binding multiple
+        // SSEServerTransports to one Server instance is rejected by the MCP SDK.
+        // Legacy `POST ?sessionId=…` resumes still resolve via the static sessions map.
+        const perReqPbServer = new PocketBaseServer();
+        perReqPbServer.configureFromHeaders(req.headers);
+        const transport = perReqPbServer.createSSETransport(req, res);
+        await perReqPbServer.connectTransport(transport);
         return;
       }
 
@@ -1078,3 +1087,13 @@ async function main() {
 }
 
 main().catch(console.error);
+
+// Module-level SIGINT handler: closes every live legacy SSE transport exactly
+// once. Registered at module load instead of in the PocketBaseServer constructor
+// so per-request server instances don't pile up listeners.
+process.on('SIGINT', async () => {
+  for (const transport of PocketBaseServer.getSessions().values()) {
+    try { await transport.close(); } catch { /* ignore */ }
+  }
+  process.exit(0);
+});
